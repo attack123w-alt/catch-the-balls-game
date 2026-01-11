@@ -1,0 +1,249 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Catch the Balls - Pro</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background: linear-gradient(to bottom, #1e3c72, #2a5298, #000428); 
+            font-family: 'Segoe UI', sans-serif;
+            color: white;
+            user-select: none;
+        }
+        canvas { display: block; cursor: crosshair; }
+        #menu {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 40px;
+            border-radius: 30px;
+            border: 3px solid #4facfe;
+            box-shadow: 0 0 30px rgba(79, 172, 254, 0.6);
+            z-index: 10;
+        }
+        .btn {
+            padding: 12px 25px;
+            margin: 10px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            border: none;
+            border-radius: 50px;
+            transition: 0.3s;
+        }
+        .begin { background: #4caf50; color: white; }
+        .inter { background: #ff9800; color: white; }
+        .adv { background: #f44336; color: white; }
+        .btn:hover { transform: translateY(-3px); box-shadow: 0 5px 15px rgba(255,255,255,0.4); }
+        
+        #ui { 
+            position: absolute; 
+            top: 20px; 
+            left: 5%;
+            right: 5%;
+            display: flex;
+            justify-content: space-between;
+            font-size: 22px; 
+            pointer-events: none; 
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        .high-score-label { color: #ffd700; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div>Score: <span id="score">0</span> | Level: <span id="lvlName">None</span></div>
+        <div class="high-score-label">🏆 Best: <span id="highScore">0</span></div>
+    </div>
+
+    <div id="menu">
+        <h1 style="font-size: 42px; margin-bottom: 10px;">Catch the Balls!</h1>
+        <p style="margin-bottom: 30px; font-size: 18px;">Click the balls to score points.<br>Don't let them escape!</p>
+        <button class="btn begin" onclick="startGame('Beginner')">Beginner</button>
+        <button class="btn inter" onclick="startGame('Intermediate')">Intermediate</button>
+        <button class="btn adv" onclick="startGame('Advanced')">Advanced</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const highScoreElement = document.getElementById('highScore');
+        const lvlNameElement = document.getElementById('lvlName');
+        const menu = document.getElementById('menu');
+
+        let score = 0;
+        let highScore = localStorage.getItem('catchBallsHighScorePro') || 0;
+        let balls = [];
+        let particles = [];
+        let speedMultiplier = 1;
+        let spawnRate = 800;
+        let gameActive = false;
+
+        highScoreElement.innerText = highScore;
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        // Particle System
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.color = color;
+                this.size = Math.random() * 5 + 2;
+                this.speedX = (Math.random() - 0.5) * 10;
+                this.speedY = (Math.random() - 0.5) * 10;
+                this.alpha = 1;
+            }
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                this.alpha -= 0.02;
+            }
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.alpha;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        class Ball {
+            constructor() {
+                this.x = Math.random() * (canvas.width - 60) + 30;
+                this.y = -50;
+                this.radius = Math.random() * 15 + 15;
+                this.speed = (Math.random() * 3 + 2) * speedMultiplier;
+                this.color = `hsl(${Math.random() * 360}, 80%, 60%)`;
+            }
+            update() { this.y += this.speed; }
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.strokeStyle = "rgba(255,255,255,0.9)";
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                ctx.closePath();
+            }
+        }
+
+        function playPopSound() {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(200, audioCtx.currentTime + 0.1);
+            gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.1);
+        }
+
+        function createExplosion(x, y, color) {
+            for (let i = 0; i < 15; i++) {
+                particles.push(new Particle(x, y, color));
+            }
+        }
+
+        function startGame(level) {
+            menu.style.display = 'none';
+            gameActive = true;
+            score = 0;
+            balls = [];
+            particles = [];
+            scoreElement.innerText = score;
+            lvlNameElement.innerText = level;
+
+            if(level === 'Beginner') { speedMultiplier = 1; spawnRate = 1200; }
+            if(level === 'Intermediate') { speedMultiplier = 1.8; spawnRate = 800; }
+            if(level === 'Advanced') { speedMultiplier = 3; spawnRate = 500; }
+
+            spawnBall();
+            animate();
+        }
+
+        function spawnBall() {
+            if(!gameActive) return;
+            balls.push(new Ball());
+            setTimeout(spawnBall, spawnRate);
+        }
+
+        function animate() {
+            if(!gameActive) return;
+            // Clear canvas with a slight fade for motion blur
+            ctx.fillStyle = "rgba(0, 4, 40, 0.3)";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Update & Draw Particles
+            particles.forEach((p, index) => {
+                p.update();
+                p.draw();
+                if (p.alpha <= 0) particles.splice(index, 1);
+            });
+
+            // Update & Draw Balls
+            balls.forEach((ball, index) => {
+                ball.update();
+                ball.draw();
+                if (ball.y > canvas.height + ball.radius) endGame();
+            });
+            
+            requestAnimationFrame(animate);
+        }
+
+        function endGame() {
+            gameActive = false;
+            menu.style.display = 'block';
+            menu.innerHTML = `
+                <h1 style="color: #ff4d4d; margin:0;">GAME OVER!</h1>
+                <p style="font-size: 24px; margin: 15px 0;">Final Score: ${score}</p>
+                <button class="btn begin" onclick="location.reload()">PLAY AGAIN</button>
+            `;
+        }
+
+        canvas.addEventListener('mousedown', (e) => {
+            if(!gameActive) return;
+            balls.forEach((ball, index) => {
+                const dx = e.clientX - ball.x;
+                const dy = e.clientY - ball.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < ball.radius + 15) {
+                    createExplosion(ball.x, ball.y, ball.color);
+                    balls.splice(index, 1);
+                    score += 10;
+                    scoreElement.innerText = score;
+                    playPopSound();
+
+                    if (score > highScore) {
+                        highScore = score;
+                        localStorage.setItem('catchBallsHighScorePro', highScore);
+                        highScoreElement.innerText = highScore;
+                    }
+                }
+            });
+        });
+
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+    </script>
+</body>
+</html>
